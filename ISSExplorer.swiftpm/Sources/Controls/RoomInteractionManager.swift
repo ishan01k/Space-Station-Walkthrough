@@ -1,5 +1,7 @@
 import SceneKit
 import SpriteKit
+import UIKit
+import CoreHaptics
 
 
 class RoomInteractionManager: NSObject {
@@ -44,21 +46,83 @@ class RoomInteractionManager: NSObject {
     private var commandPanelAge: TimeInterval = 0
     private let commandPanelRefreshInterval: TimeInterval = 8.0
     
+    private var hapticAge: TimeInterval = 0
+    private var lastHapticTime: TimeInterval = ProcessInfo.processInfo.systemUptime
+    private var hapticEngine: CHHapticEngine?
+    private var continuousPlayer: CHHapticAdvancedPatternPlayer?
+    
     init(scene: SCNScene, astronaut: AstronautNode, hud: HUDOverlay, scnView: SCNView) {
         self.scene = scene
         self.astronaut = astronaut
         self.hud = hud
         self.scnView = scnView
         super.init()
+        setupHapticEngine()
+    }
+    
+    private func setupHapticEngine() {
+        guard CHHapticEngine.capabilitiesForHardware().supportsHaptics else { return }
+        do {
+            hapticEngine = try CHHapticEngine()
+            hapticEngine?.isAutoShutdownEnabled = false
+            try hapticEngine?.start()
+        } catch {
+            print("Haptic engine failed to start: \(error)")
+        }
+    }
+    
+    /// Fire a one-shot transient haptic (room entry, etc.)
+    func fireTransientHaptic(intensity: Float = 1.0, sharpness: Float = 0.5) {
+        guard let engine = hapticEngine,
+              CHHapticEngine.capabilitiesForHardware().supportsHaptics else { return }
+        let params: [CHHapticEventParameter] = [
+            CHHapticEventParameter(parameterID: .hapticIntensity, value: intensity),
+            CHHapticEventParameter(parameterID: .hapticSharpness, value: sharpness)
+        ]
+        let event = CHHapticEvent(eventType: .hapticTransient, parameters: params, relativeTime: 0)
+        do {
+            let pattern = try CHHapticPattern(events: [event], parameters: [])
+            let player = try engine.makePlayer(with: pattern)
+            try player.start(atTime: CHHapticTimeImmediate)
+        } catch { }
+    }
+    
+    /// Start a continuous looping haptic pattern
+    func startContinuousHaptic(intensity: Float, sharpness: Float) {
+        guard let engine = hapticEngine,
+              CHHapticEngine.capabilitiesForHardware().supportsHaptics else { return }
+        stopContinuousHaptic()
+        let params: [CHHapticEventParameter] = [
+            CHHapticEventParameter(parameterID: .hapticIntensity, value: intensity),
+            CHHapticEventParameter(parameterID: .hapticSharpness, value: sharpness)
+        ]
+        let event = CHHapticEvent(eventType: .hapticContinuous, parameters: params,
+                                  relativeTime: 0, duration: 100)
+        do {
+            let pattern = try CHHapticPattern(events: [event], parameters: [])
+            continuousPlayer = try engine.makeAdvancedPlayer(with: pattern)
+            continuousPlayer?.loopEnabled = true
+            try continuousPlayer?.start(atTime: CHHapticTimeImmediate)
+        } catch { }
+    }
+    
+    func stopContinuousHaptic() {
+        try? continuousPlayer?.stop(atTime: CHHapticTimeImmediate)
+        continuousPlayer = nil
     }
     func checkRoomBoundaries(position: SCNVector3) {
         var expectedRoom = ""
         let x = position.x
         let z = position.z
-        if z < -5.0 {
-            if spaceWalkActive && z < -25.0 {
-                expectedRoom = "OuterSpace" 
+        
+        if spaceWalkActive {
+            if x > 6.5 && x < 13.5 && z < -16.8 && z > -25.0 {
+                expectedRoom = "Hatch2Trigger"
             } else {
+                expectedRoom = "OuterSpace"
+            }
+        } else {
+            if z < -5.0 {
                 if x > -15.5 && x < -8.5 { expectedRoom = "WindowRoomTrigger" }
                 else if x > -8.5 && x < -1.5 { expectedRoom = "LogTrigger" }
                 else if x > -0.5 && x < 6.5 { expectedRoom = "ZeroGTrigger" }
@@ -69,18 +133,26 @@ class RoomInteractionManager: NSObject {
                     else { expectedRoom = "Hatch2Trigger" } 
                 }
                 else if x > 13.5 && x < 20.5 { expectedRoom = "TechTrigger" }
+            } else if z > 4.5 {
+                if x > -11.5 && x < -2.5 { expectedRoom = "ScienceLabTrigger" }    
+                else if x > 2.5 && x < 11.5 { expectedRoom = "CommandControlTrigger" } 
             }
-        } else if z > 4.5 {
-            if x > -11.5 && x < -2.5 { expectedRoom = "ScienceLabTrigger" }    
-            else if x > 2.5 && x < 11.5 { expectedRoom = "CommandControlTrigger" } 
         }
+        
         if expectedRoom != currentRoom {
             let previousRoom = currentRoom
             currentRoom = expectedRoom 
             if !previousRoom.isEmpty { exitRoom(trigger: previousRoom) }
-            if !expectedRoom.isEmpty { enterRoom(trigger: expectedRoom) }
+            if !expectedRoom.isEmpty { 
+                DispatchQueue.main.async { self.fireTransientHaptic(intensity: 0.8, sharpness: 0.5) }
+                enterRoom(trigger: expectedRoom) 
+            }
         }
+        
         let currentTime = ProcessInfo.processInfo.systemUptime
+        let dt = currentTime - lastHapticTime
+        lastHapticTime = currentTime
+        _ = dt // continuous haptics now handled by start/stop on state change
         if spaceWalkActive && !cableAttached {
             if lastUntetheredUpdate == 0 {
                 lastUntetheredUpdate = currentTime
@@ -233,16 +305,22 @@ class RoomInteractionManager: NSObject {
                     self.astronaut.physicsBody?.velocity.z ?? 0
                 )
                 self.astronaut.startFloatAnimation()
+                // Low gentle hum while floating in zero-g
+                DispatchQueue.main.async { self.startContinuousHaptic(intensity: 0.25, sharpness: 0.1) }
             } else {
                 self.scene.physicsWorld.gravity = SCNVector3(0, -9.8, 0)
                 self.astronaut.stopFloatAnimation()
+                DispatchQueue.main.async { self.stopContinuousHaptic() }
             }
             self.updateZeroGButton()
         }
     }
     func airlockStepInstructions() -> [String] {
         var steps: [String] = ["SPACE WALK PREPARATION", ""]
-        if !suitedUp {
+        if zeroGEnabled {
+            steps.append("⚠️ ERROR: Zero-G Enabled")
+            steps.append("Status: Must disable Zero-G first.")
+        } else if !suitedUp {
             steps.append("STEP 1: Wear Space Suit")
             steps.append("Status: REQUIRED")
         } else if !hatch1Open && currentRoom == "SuitUpTrigger" {
@@ -306,15 +384,24 @@ class RoomInteractionManager: NSObject {
         hud.hideButton() 
         switch currentRoom {
         case "SuitUpTrigger":
-            if !suitedUp {
-                hud.showButton(text: "🧑‍🚀 Wear Space Suit") { [weak self] in
-                    guard let self = self else { return }
-                    self.suitedUp = true
-                    self.applySpaceSuit()
-                    self.updateAirlockButton()
+            if zeroGEnabled {
+                hud.showButton(text: "⚠️ Turn off Zero-G to Suit Up") {}
+            } else if !suitedUp {
+                hud.showButton(text: "👩‍🚀 Wear Space Suit") { [weak self] in
+                    self?.suitedUp = true
+                    self?.applySpaceSuit()
+                    self?.updateAirlockButton()
                 }
             } else {
-                hud.showButton(text: "✅ Suit Donned") {}
+                if hatch1Open {
+                    hud.showButton(text: "⚠️ Close Inner Hatch to Remove Suit") {}
+                } else {
+                    hud.showButton(text: "👕 Remove Space Suit") { [weak self] in
+                        self?.suitedUp = false
+                        self?.removeSpaceSuit()
+                        self?.updateAirlockButton()
+                    }
+                }
             }
         case "Hatch1Trigger":
             if !hatch1Open {
@@ -368,6 +455,8 @@ class RoomInteractionManager: NSObject {
                             self.startEVATimer()
                             self.hud.showManeuverButtons()
                             self.updateAirlockButton()
+                            // Higher-intensity continuous buzz during spacewalk
+                            DispatchQueue.main.async { self.startContinuousHaptic(intensity: 0.6, sharpness: 0.7) }
                         }
                     }
                 } else {
@@ -538,6 +627,7 @@ class RoomInteractionManager: NSObject {
         hud.hideManeuverButtons()
         astronaut.stopFloatAnimation()
         stopEVATimer()
+        stopContinuousHaptic()
         animateHatch1(open: false)
         animateHatch2(open: false)
         astronaut.physicsBody?.velocity = SCNVector3Zero
@@ -593,13 +683,24 @@ class RoomInteractionManager: NSObject {
         astronaut.facingAngle = Float.pi
         astronaut.physicsBody?.type = .kinematic
         astronaut.startSitAnimation()
-        hud.updateDataPanel(texts: [
+        
+        var texts = [
             "COMMAND CONSOLE ACTIVE",
             "> Link to Ground Control: NOMINAL",
             "> Robotics Subsystems: STOWED",
             "> Flight Path: STABLE",
             "Awaiting input..."
-        ])
+        ]
+        
+        if zeroGEnabled {
+            zeroGEnabled = false
+            scene.physicsWorld.gravity = SCNVector3(0, -9.8, 0)
+            astronaut.stopFloatAnimation()
+            hud.hideZeroGButton()
+            texts.insert("⚠️ ZERO-G OVERRIDE: DISABLED", at: 1)
+        }
+        
+        hud.updateDataPanel(texts: texts)
     }
     func leaveCommandCenter() {
         guard isCommanding else { return }
@@ -616,6 +717,9 @@ class RoomInteractionManager: NSObject {
         guard !isSleeping else { return }
         isSleeping = true
         joystick?.hide()
+        hud.hideRecordButton()
+        hud.hideSitButton()
+        hud.hideButton()
         savedAstronautPos = astronaut.presentation.worldPosition
         savedFacingAngle = astronaut.facingAngle
         astronaut.physicsBody?.velocity = SCNVector3Zero
@@ -623,14 +727,30 @@ class RoomInteractionManager: NSObject {
         astronaut.facingAngle = .pi / 2
         astronaut.eulerAngles.x = -.pi / 2 
         astronaut.physicsBody?.type = .kinematic
-        if let cctv = scene.rootNode.childNode(withName: "CCTVCamera", recursively: true) {
-            scnView?.pointOfView = cctv
+        
+        if let existing = scene.rootNode.childNode(withName: "SleepCamera", recursively: true) {
+            existing.removeFromParentNode()
         }
+        let sleepCam = SCNNode()
+        sleepCam.name = "SleepCamera"
+        sleepCam.camera = SCNCamera()
+        // Positioned above and slightly in front of the monitor (world: ~-6.70, above, -13.8)
+        // Log Room is at (-5, 0, -8), monitor local (-1.70, 1.60, -6.37) → world (-6.70, 1.60, -14.37)
+        sleepCam.position = SCNVector3(-6.70, 2.5, -13.5)
+        // Manually set orientation to avoid look(at:) flipping the up-vector
+        // Camera looks right (+x) and slightly down toward the sleep pod
+        sleepCam.eulerAngles = SCNVector3(-0.65, 1.15, 0)
+        scene.rootNode.addChildNode(sleepCam)
+        scnView?.pointOfView = sleepCam
+        
         toggleRoomLight(for: "LogTrigger", isOn: false)
     }
     func wakeUpFromPod() {
         guard isSleeping else { return }
         isSleeping = false
+        if let sleepCam = scene.rootNode.childNode(withName: "SleepCamera", recursively: true) {
+            sleepCam.removeFromParentNode()
+        }
         astronaut.eulerAngles.x = 0 
         astronaut.facingAngle = savedFacingAngle
         joystick?.show()
@@ -702,13 +822,13 @@ class RoomInteractionManager: NSObject {
     }
     func update() {
         if isSleeping,
-           let cctv = scene.rootNode.childNode(withName: "CCTVCamera", recursively: true),
+           let sleepCam = scene.rootNode.childNode(withName: "SleepCamera", recursively: true),
            let joystick = joystick {
             let delta = joystick.getAndResetLookDelta()
             let sensitivity: Float = 0.003
-            cctv.eulerAngles.y -= Float(delta.x) * sensitivity
-            cctv.eulerAngles.x -= Float(delta.y) * sensitivity
-            cctv.eulerAngles.x = max(-1.2, min(0.2, cctv.eulerAngles.x))
+            sleepCam.eulerAngles.y -= Float(delta.x) * sensitivity
+            sleepCam.eulerAngles.x -= Float(delta.y) * sensitivity
+            sleepCam.eulerAngles.x = max(-1.2, min(0.2, sleepCam.eulerAngles.x))
             hud.updateMinimap(astronautPosition: astronaut.presentation.worldPosition)
             hud.showSitButton(text: "⏰ Wake Up") { [weak self] in self?.wakeUpFromPod() }
             return

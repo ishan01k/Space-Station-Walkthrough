@@ -14,6 +14,7 @@ struct GameSceneView: UIViewRepresentable {
         scnView.delegate = context.coordinator
         scnView.backgroundColor = .black
         scnView.allowsCameraControl = false
+        scnView.isMultipleTouchEnabled = true
         
         let coordinator = context.coordinator
         let scene = SCNScene()
@@ -145,7 +146,7 @@ struct GameSceneView: UIViewRepresentable {
         return scnView
     }
     func updateUIView(_ uiView: SCNView, context: Context) {
-        if let overlay = uiView.overlaySKScene {
+        if let overlay = uiView.overlaySKScene, overlay.size != uiView.bounds.size {
             overlay.size = uiView.bounds.size
         }
     }
@@ -163,7 +164,10 @@ class GameCoordinator: NSObject, SCNSceneRendererDelegate {
     weak var scnViewRef: SCNView?
     func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
         playerController?.update(deltaTime: time)
-        cameraRig?.update()
+    }
+    
+    func renderer(_ renderer: SCNSceneRenderer, didSimulatePhysicsAtTime time: TimeInterval) {
+        cameraRig?.update(time: time)
         interactionManager?.update()
     }
 }

@@ -42,7 +42,11 @@ class ThirdPersonCamera {
         )
         cameraNode.look(at: targetPos)
     }
-    func update() {
+    private var lastTime: TimeInterval = 0
+    
+    func update(time: TimeInterval) {
+        let dt = Float(lastTime == 0 ? 1.0/60.0 : time - lastTime)
+        lastTime = time
         
         guard let target = target else { return }
         
@@ -90,20 +94,25 @@ class ThirdPersonCamera {
             }
         }
         let posSmooth: Float = 18.0
+        let pt = 1.0 - exp(-posSmooth * dt)
         
-        let pt = posSmooth * (1.0 / 60.0)
         cameraNode.position = SCNVector3(
             cameraNode.position.x + (desiredPos.x - cameraNode.position.x) * pt,
             cameraNode.position.y + (desiredPos.y - cameraNode.position.y) * pt,
             cameraNode.position.z + (desiredPos.z - cameraNode.position.z) * pt
         )
         let finalYaw = angle - .pi / 2
+        var yawDiff = finalYaw - cameraNode.eulerAngles.y
+        while yawDiff > .pi { yawDiff -= 2 * .pi }
+        while yawDiff < -.pi { yawDiff += 2 * .pi }
+        
         let finalPitch = defaultPitch + Float(lookOffset.y)
         let rotSmooth: Float = 8.0
+        let rotPt = 1.0 - exp(-rotSmooth * dt)
         let clampedPitch = -max(minPitch, min(maxPitch, finalPitch))
         
-        cameraNode.eulerAngles.y += (finalYaw - cameraNode.eulerAngles.y) * rotSmooth * (1.0 / 60.0)
-        cameraNode.eulerAngles.x += (clampedPitch - cameraNode.eulerAngles.x) * rotSmooth * (1.0 / 60.0)
+        cameraNode.eulerAngles.y += yawDiff * rotPt
+        cameraNode.eulerAngles.x += (clampedPitch - cameraNode.eulerAngles.x) * rotPt
         cameraNode.eulerAngles.z = 0
     }
 }

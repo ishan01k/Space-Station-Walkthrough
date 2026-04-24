@@ -36,6 +36,11 @@
      private var missionsScrollOffset: CGFloat = 0
      var isMissionsExplorerVisible: Bool { missionsOverlayNode != nil }
      var dataPanelContainer: SKNode!
+     
+     private var roomNameLabelNode: SKLabelNode?
+     private var dataLabelNode: SKLabelNode?
+     private var zeroGBgNode: SKShapeNode?
+     private var recordBgNode: SKShapeNode?
      init(sceneSize: CGSize) {
          self.sceneSize = sceneSize
      }
@@ -77,7 +82,9 @@
          sitButton = createSideButton(name: "sitButton", text: "🪑 Sit Down", yOffset: 410)
          scene.addChild(sitButton)
          zeroGButton = createZeroGButton()
+         self.zeroGBgNode = zeroGButton.childNode(withName: "zeroGBg") as? SKShapeNode
          scene.addChild(zeroGButton)
+         self.recordBgNode = recordButton?.childNode(withName: "sideBg") as? SKShapeNode
          setupMinimap(in: scene)
          setupDataPanel(in: scene)
          setupManeuverButtons(in: scene)
@@ -159,15 +166,16 @@
          dataLabel.numberOfLines = 0
          dataLabel.preferredMaxLayoutWidth = panelWidth - 30
          dataPanelContainer.addChild(dataLabel)
+         
+         self.roomNameLabelNode = roomLabel
+         self.dataLabelNode = dataLabel
      }
      func updateRoomLabel(text: String) {
-         if let label = dataPanelContainer.childNode(withName: "roomNameLabel") as? SKLabelNode {
-             label.text = text
-         }
+         roomNameLabelNode?.text = text
      }
      private var currentDataText: String = ""
      func updateDataPanel(texts: [String]) {
-         guard let label = dataPanelContainer.childNode(withName: "dataLabel") as? SKLabelNode else { return }
+         guard let label = dataLabelNode else { return }
          let fullText = "> " + texts.joined(separator: "\n> ")
          if fullText == currentDataText { return }
          currentDataText = fullText
@@ -190,14 +198,16 @@
          label.run(SKAction.sequence(actions))
      }
      func clearDataPanel() {
-         if let label = dataPanelContainer.childNode(withName: "dataLabel") as? SKLabelNode {
+         if let label = dataLabelNode {
              label.removeAllActions()
              label.text = "> _"
          }
      }
      func setDataPanelInstant(texts: [String]) {
-         guard let label = dataPanelContainer.childNode(withName: "dataLabel") as? SKLabelNode else { return }
+         guard let label = dataLabelNode else { return }
          let fullText = "> " + texts.joined(separator: "\n> ")
+         if fullText == currentDataText { return }
+         currentDataText = fullText
          label.removeAllActions()
          label.text = fullText + "\n> _"
      }
@@ -398,7 +408,7 @@
          zeroGButton.isHidden = false
          onZeroGTap = action
          zeroGButton.removeAction(forKey: "zeroGPulse")
-         if isZeroGOn, let bg = zeroGButton.childNode(withName: "zeroGBg") as? SKShapeNode {
+         if isZeroGOn, let bg = zeroGBgNode {
              bg.strokeColor = UIColor(red: 0.2, green: 1.0, blue: 0.5, alpha: 1.0)
              let glowIn  = SKAction.customAction(withDuration: 0.7) { node, t in
                  (node as? SKShapeNode)?.glowWidth = CGFloat(t / 0.7) * 10
@@ -407,7 +417,7 @@
                  (node as? SKShapeNode)?.glowWidth = (1 - CGFloat(t / 0.7)) * 10
              }
              bg.run(.repeatForever(.sequence([glowIn, glowOut])), withKey: "zeroGPulse")
-         } else if let bg = zeroGButton.childNode(withName: "zeroGBg") as? SKShapeNode {
+         } else if let bg = zeroGBgNode {
              bg.removeAction(forKey: "zeroGPulse")
              bg.glowWidth = 0
              bg.strokeColor = UIColor(red: 0.4, green: 0.75, blue: 1.0, alpha: 0.9)
@@ -441,7 +451,7 @@
      func showRecordButton(text: String, action: @escaping () -> Void) {
          recordButton?.text = text
          recordButton?.isHidden = false
-         if let bg = recordButton?.childNode(withName: "sideBg") as? SKShapeNode {
+         if let bg = recordBgNode {
              let isRecording = text.contains("Stop")
              bg.strokeColor = isRecording
                  ? UIColor(red: 1.0, green: 0.2, blue: 0.2, alpha: 1.0)
@@ -777,6 +787,7 @@
          buildMissionsOverlay(in: scene)
      }
      func hideMissionsExplorer() {
+         guard isMissionsExplorerVisible else { return }
          missionsOverlayNode?.removeFromParent()
          missionsOverlayNode = nil
          missionsSearchText = ""

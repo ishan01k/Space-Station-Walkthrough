@@ -175,10 +175,10 @@ class AstronautNode: SCNNode {
             geometry: SCNCapsule(capRadius: 0.3, height: 1.6), options: nil))
         
         body.categoryBitMask = PhysicsCategory.player
-        body.contactTestBitMask = PhysicsCategory.trigger | PhysicsCategory.wall
+        body.contactTestBitMask = PhysicsCategory.trigger
         body.collisionBitMask = PhysicsCategory.wall | PhysicsCategory.npc
         body.mass = 70
-        body.friction = 0.8
+        body.friction = 0.0
         body.restitution = 0.0
         body.damping = 0.3
         body.angularDamping = 1.0

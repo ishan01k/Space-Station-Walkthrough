@@ -178,15 +178,17 @@ class ISSSceneBuilder {
             sn.position = SCNVector3(r * sin(phi) * cos(theta), r * cos(phi), r * sin(phi) * sin(theta))
             ext.addChildNode(sn)
         }
-        let earthGeo = SCNSphere(radius: 80)
-        earthGeo.segmentCount = 64
+        let earthGeo = SCNSphere(radius: 2000)
+        earthGeo.segmentCount = 128
         earthGeo.firstMaterial = makeEarthMaterial()
         let earthN = SCNNode(geometry: earthGeo)
         earthN.name = "GlobalEarth"
-        earthN.position = SCNVector3(0, -70, -100)
+        earthN.position = SCNVector3(0, -2000, -800)
         earthN.runAction(.repeatForever(.rotateBy(x: 0, y: 0.05, z: 0, duration: 60)))
+        earthN.physicsBody = .static()
+        earthN.physicsBody?.categoryBitMask = PhysicsCategory.wall
         ext.addChildNode(earthN)
-        let atmoGeo = SCNSphere(radius: 81)
+        let atmoGeo = SCNSphere(radius: 2020)
         let atmoMat = SCNMaterial()
         atmoMat.diffuse.contents = UIColor(red: 0.3, green: 0.6, blue: 1.0, alpha: 0.08)
         atmoMat.emission.contents = UIColor(red: 0.2, green: 0.5, blue: 1.0, alpha: 0.15)
@@ -194,6 +196,18 @@ class ISSSceneBuilder {
         let atmoN = SCNNode(geometry: atmoGeo)
         atmoN.position = earthN.position
         ext.addChildNode(atmoN)
+        
+        let moonGeo = SCNSphere(radius: 120)
+        moonGeo.segmentCount = 64
+        let moonMat = SCNMaterial()
+        moonMat.diffuse.contents = UIColor(white: 0.6, alpha: 1.0)
+        moonGeo.firstMaterial = moonMat
+        let moonN = SCNNode(geometry: moonGeo)
+        moonN.name = "Moon"
+        moonN.position = SCNVector3(-1500, 800, -3500)
+        moonN.physicsBody = .static()
+        moonN.physicsBody?.categoryBitMask = PhysicsCategory.wall
+        ext.addChildNode(moonN)
         let trussLen: CGFloat = 100
         let trussSection: CGFloat = 1.5
         let truss = SCNBox(width: trussSection, height: trussSection, length: trussLen, chamferRadius: 0.1)
@@ -221,6 +235,8 @@ class ISSSceneBuilder {
             panel.firstMaterial = solarMat
             let pn = SCNNode(geometry: panel)
             pn.eulerAngles.x = .pi / 4
+            pn.physicsBody = .static()
+            pn.physicsBody?.categoryBitMask = PhysicsCategory.wall
             wing.addChildNode(pn)
             ext.addChildNode(wing)
         }
@@ -231,6 +247,8 @@ class ISSSceneBuilder {
              let rn = SCNNode(geometry: rad)
              rn.position = SCNVector3(2.5, 12, z)
              rn.eulerAngles.x = -.pi / 4
+             rn.physicsBody = .static()
+             rn.physicsBody?.categoryBitMask = PhysicsCategory.wall
              ext.addChildNode(rn)
         }
         return ext
@@ -464,7 +482,7 @@ class ISSSceneBuilder {
 
     func addCorridorLighting(to root: SCNNode) {
         let zOffsets: [Float] = [-1.5, 1.5]
-        for x in stride(from: -18, through: 18, by: 4) {
+        for x in stride(from: -18, through: 18, by: 8) {
             let xf = Float(x)
             for zf in zOffsets {
                 let light = SCNLight(); light.type = .omni
@@ -531,14 +549,19 @@ class ISSSceneBuilder {
         let backWallZ = Float(-d)
         let cupolaCenterY: Float = 3.5
         let holeRadius: CGFloat = 2.45
-        let wallTube = SCNTube(innerRadius: holeRadius, outerRadius: w * 1.5, height: 0.15)
-        wallTube.firstMaterial = wallMat
-        let wtNode = SCNNode(geometry: wallTube)
-        wtNode.eulerAngles.x = .pi / 2
-        wtNode.position = SCNVector3(0, cupolaCenterY, backWallZ)
-        wtNode.physicsBody = .static()
-        wtNode.physicsBody?.categoryBitMask = PhysicsCategory.wall
-        room.addChildNode(wtNode)
+        
+        let wallPath = UIBezierPath(rect: CGRect(x: -w/2, y: 0, width: w, height: h))
+        let holePath = UIBezierPath(arcCenter: CGPoint(x: 0, y: CGFloat(cupolaCenterY)), radius: holeRadius, startAngle: 0, endAngle: .pi * 2, clockwise: false)
+        wallPath.append(holePath)
+        
+        let backWall = SCNShape(path: wallPath, extrusionDepth: 0.15)
+        backWall.firstMaterial = wallMat
+        let bwn = SCNNode(geometry: backWall)
+        bwn.position = SCNVector3(0, 0, backWallZ)
+        bwn.physicsBody = .static()
+        bwn.physicsBody?.categoryBitMask = PhysicsCategory.wall
+        room.addChildNode(bwn)
+        
         let cupolaNode = SCNNode()
         cupolaNode.position = SCNVector3(0, 3.5, backWallZ)
         room.addChildNode(cupolaNode)
@@ -566,18 +589,18 @@ class ISSSceneBuilder {
         let deltaR = rWall - rCenter
         let deltaZ = zCenter - zWall 
         let panelLength = sqrt(deltaR * deltaR + deltaZ * deltaZ)
-        let pitchAngle = atan2(deltaZ, deltaR)
+        let pitchAngle = atan2(deltaR, -deltaZ)
         let avgRadius = (rWall + rCenter) / 2.0
         let panelWidth = (2.0 * Float.pi * avgRadius) / 6.0 - 0.1 
         for i in 0..<6 {
             let sliceNode = SCNNode()
             let yawAngle = Float(i) * (.pi / 3.0)
             sliceNode.eulerAngles.z = yawAngle
-            let panel = SCNBox(width: CGFloat(panelWidth), height: 0.05, length: CGFloat(panelLength), chamferRadius: 0)
+            let panel = SCNBox(width: 0.05, height: CGFloat(panelWidth), length: CGFloat(panelLength), chamferRadius: 0)
             panel.firstMaterial = glassMat
             let pn = SCNNode(geometry: panel)
-            let midX = rCenter + deltaR / 2.0
-            let midZ = zCenter - deltaZ / 2.0
+            let midX = (rWall + rCenter) / 2.0
+            let midZ = (zWall + zCenter) / 2.0
             pn.position = SCNVector3(midX, 0, midZ)
             pn.eulerAngles.y = pitchAngle
             sliceNode.addChildNode(pn)
@@ -799,12 +822,12 @@ class ISSSceneBuilder {
         let standPole = SCNBox(width: 0.06, height: 0.28, length: 0.06, chamferRadius: 0.01)
         standPole.firstMaterial = darkMat
         let spn = SCNNode(geometry: standPole)
-        spn.position = SCNVector3(-1.70, 1.08, -6.42)
+        spn.position = SCNVector3(-0.20, 1.18, -6.40)
         room.addChildNode(spn)
         let standBase = SCNBox(width: 0.45, height: 0.04, length: 0.28, chamferRadius: 0.02)
         standBase.firstMaterial = darkMat
         let sbn = SCNNode(geometry: standBase)
-        sbn.position = SCNVector3(-1.70, 1.00, -6.45)
+        sbn.position = SCNVector3(-0.20, 1.06, -6.40)
         room.addChildNode(sbn)
         let chairNode = SCNNode()
         chairNode.name = "LogRoomChair"
@@ -829,11 +852,17 @@ class ISSSceneBuilder {
         camBody.firstMaterial = darkMat
         let camN = SCNNode(geometry: camBody)
         camN.name = "CCTVCamera"
+        
         let cctvRealCam = SCNCamera()
         cctvRealCam.fieldOfView = 75
-        camN.camera = cctvRealCam
-        camN.position = SCNVector3(0.0, 2.5, -6.0)
-        camN.eulerAngles.y = 3.5
+        
+        let povNode = SCNNode()
+        povNode.camera = cctvRealCam
+        povNode.eulerAngles.y = Float.pi 
+        camN.addChildNode(povNode)
+        
+        camN.position = SCNVector3(-0.20, 1.42, -6.40)
+        camN.eulerAngles.y = -0.3
         camN.eulerAngles.x = -0.3
         addStaticPhysics(to: camN)
         room.addChildNode(camN)
